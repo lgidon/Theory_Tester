@@ -44,57 +44,56 @@ func main() {
 		log.Fatalf("Failed to verify database state: %v", err)
 	}
 
-	if !needsScrape {
-		fmt.Printf("Database already contains questions for %s. Skipping scrape phase.\n", licenseType)
-		// This is where you will eventually call your Web UI launcher!
-		return
-	}
-
-	// 3. Perform the scrape if database is clean
-	fmt.Printf("Database empty for %s. Commencing index crawl...\n", licenseType)
-	questionURLs, err := crawlIndexPage(CategoryURL)
-	if err != nil {
-		log.Fatalf("Error crawling index page: %v", err)
-	}
-
-	fmt.Printf("Found %d questions. Starting processing run...\n", len(questionURLs))
-
-	// Inside scraper.go -> main() loop:
-	for i, url := range questionURLs {
-		fmt.Printf("[%d/%d] Scraping: %s\n", i+1, len(questionURLs), url)
-		
-		q, err := parseQuestionPage(url)
+	// 3. Perform the scrape only if database is clean
+	if needsScrape {
+		fmt.Printf("Database empty for %s. Commencing index crawl...\n", licenseType)
+		questionURLs, err := crawlIndexPage(CategoryURL)
 		if err != nil {
-			fmt.Printf("⚠️ Error parsing %s: %v\n", url, err)
-			continue
+			log.Fatalf("Error crawling index page: %v", err)
 		}
 
-		// If the question contains a remote image URL, download it locally
-		if q.ImageURL != "" {
-			imagesDir := "./data/images"
-			fmt.Printf("   💾 Downloading image for %s...\n", q.ID)
+		fmt.Printf("Found %d questions. Starting processing run...\n", len(questionURLs))
+
+		for i, url := range questionURLs {
+			fmt.Printf("[%d/%d] Scraping: %s\n", i+1, len(questionURLs), url)
 			
-			localFilename, err := downloadImage(q.ImageURL, q.ID, imagesDir)
+			q, err := parseQuestionPage(url)
 			if err != nil {
-				fmt.Printf("   ⚠️ Failed to download image for %s: %v\n", q.ID, err)
-				// Decide if you want to continue without the image or skip
-				q.ImageURL = "" 
-			} else {
-				// Overwrite the remote URL with just the local filename to store in the DB
-				q.ImageURL = localFilename 
+				fmt.Printf("⚠️ Error parsing %s: %v\n", url, err)
+				continue
 			}
+
+			if q.ImageURL != "" {
+				imagesDir := "./data/images"
+				fmt.Printf("   💾 Downloading image for %s...\n", q.ID)
+				
+				localFilename, err := downloadImage(q.ImageURL, q.ID, imagesDir)
+				if err != nil {
+					fmt.Printf("   ⚠️ Failed to download image for %s: %v\n", q.ID, err)
+					q.ImageURL = "" 
+				} else {
+					q.ImageURL = localFilename 
+				}
+			}
+
+			if err := db.SaveQuestion(q, licenseType); err != nil {
+				fmt.Printf("⚠️ Error saving question %s to DB: %v\n", q.ID, err)
+				continue
+			}
+
+			time.Sleep(400 * time.Millisecond)
 		}
+		fmt.Println("\n🎉 Success! Question database hydrated completely.")
+	} else {
+		fmt.Printf("Database already contains questions for %s. Skipping scrape phase.\n", licenseType)
+	}
 
-    // Save to local SQLite DB
-    if err := db.SaveQuestion(q, licenseType); err != nil {
-        fmt.Printf("⚠️ Error saving question %s to DB: %v\n", q.ID, err)
-        continue
-    }
-
-    time.Sleep(400 * time.Millisecond)
-}
-
-	fmt.Println("\n🎉 Success! Question database hydrated completely.")
+	// 4. Launch Web Server (Reachable by both code execution branches)
+	server := NewWebServer(db, licenseType)
+	fmt.Println("🚀 Web UI Server active on http://localhost:8080")
+	if err := server.Start("8080"); err != nil {
+		log.Fatalf("Server shutdown unexpectedly: %v", err)
+	}
 }
 
 // crawlIndexPage parses the exact DOM structure provided in your screenshot
