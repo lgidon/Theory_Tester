@@ -1,0 +1,231 @@
+package main
+
+import (
+	"io"
+	"os"
+	"path/filepath"
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/PuerkitoBio/goquery"
+)
+
+// Question represents our normalized internal data structure
+type Question struct {
+	ID            string
+	Text          string
+	ImageURL      string
+	Answers       [4]string
+	CorrectAnswer int // 1, 2, 3, or 4
+}
+
+const (
+	BaseURL     = "https://teo.co.il"
+	CategoryURL = BaseURL + "/questions/c1" // Temporary hardcoded fallback or initial entrypoint
+)
+
+func main() {
+	dbPath := "./data/theory.db"
+	licenseType := "C1"
+
+	// 1. Initialize DB Client
+	db, err := InitDB(dbPath)
+	if err != nil {
+		log.Fatalf("Database initialization failed: %v", err)
+	}
+	defer db.Conn.Close()
+
+	// 2. Check if first-run scrape is necessary
+	needsScrape, err := db.IsDatabaseEmpty(licenseType)
+	if err != nil {
+		log.Fatalf("Failed to verify database state: %v", err)
+	}
+
+	if !needsScrape {
+		fmt.Printf("Database already contains questions for %s. Skipping scrape phase.\n", licenseType)
+		// This is where you will eventually call your Web UI launcher!
+		return
+	}
+
+	// 3. Perform the scrape if database is clean
+	fmt.Printf("Database empty for %s. Commencing index crawl...\n", licenseType)
+	questionURLs, err := crawlIndexPage(CategoryURL)
+	if err != nil {
+		log.Fatalf("Error crawling index page: %v", err)
+	}
+
+	fmt.Printf("Found %d questions. Starting processing run...\n", len(questionURLs))
+
+	// Inside scraper.go -> main() loop:
+	for i, url := range questionURLs {
+		fmt.Printf("[%d/%d] Scraping: %s\n", i+1, len(questionURLs), url)
+		
+		q, err := parseQuestionPage(url)
+		if err != nil {
+			fmt.Printf("⚠️ Error parsing %s: %v\n", url, err)
+			continue
+		}
+
+		// If the question contains a remote image URL, download it locally
+		if q.ImageURL != "" {
+			imagesDir := "./data/images"
+			fmt.Printf("   💾 Downloading image for %s...\n", q.ID)
+			
+			localFilename, err := downloadImage(q.ImageURL, q.ID, imagesDir)
+			if err != nil {
+				fmt.Printf("   ⚠️ Failed to download image for %s: %v\n", q.ID, err)
+				// Decide if you want to continue without the image or skip
+				q.ImageURL = "" 
+			} else {
+				// Overwrite the remote URL with just the local filename to store in the DB
+				q.ImageURL = localFilename 
+			}
+		}
+
+    // Save to local SQLite DB
+    if err := db.SaveQuestion(q, licenseType); err != nil {
+        fmt.Printf("⚠️ Error saving question %s to DB: %v\n", q.ID, err)
+        continue
+    }
+
+    time.Sleep(400 * time.Millisecond)
+}
+
+	fmt.Println("\n🎉 Success! Question database hydrated completely.")
+}
+
+// crawlIndexPage parses the exact DOM structure provided in your screenshot
+func crawlIndexPage(targetURL string) ([]string, error) {
+	res, err := http.Get(targetURL)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var urls []string
+	// CSS selector directly targeting your DOM screenshot context
+	doc.Find("#main-self ol li a").Each(func(i int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if exists {
+			// Handle both absolute and relative URLs gracefully
+			if !strings.HasPrefix(href, "http") {
+				href = BaseURL + href
+			}
+			urls = append(urls, href)
+		}
+	})
+
+	return urls, nil
+}
+
+// parseQuestionPage dives into a single question and extracts its details based on exact DOM attributes
+func parseQuestionPage(pageURL string) (Question, error) {
+	var q Question
+
+	// Extract an ID from the trailing URL path (e.g., ".../questions/c1/3" -> "c1_3")
+	parts := strings.Split(strings.TrimRight(pageURL, "/"), "/")
+	if len(parts) >= 2 {
+		q.ID = fmt.Sprintf("%s_%s", parts[len(parts)-2], parts[len(parts)-1])
+	} else {
+		q.ID = pageURL
+	}
+
+	res, err := http.Get(pageURL)
+	if err != nil {
+		return q, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return q, fmt.Errorf("status code error: %d", res.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		return q, err
+	}
+
+	// 1. Extract Question Text
+	q.Text = strings.TrimSpace(doc.Find("#questions h3 span.question-self").First().Text())
+
+	// 2. Extract Optional Image Layout
+	// Look for an image asset inside the questions section block
+	imgSrc, imgExists := doc.Find("#questions img").Attr("src")
+	if imgExists {
+		if !strings.HasPrefix(imgSrc, "http") {
+			q.ImageURL = BaseURL + imgSrc
+		} else {
+			q.ImageURL = imgSrc
+		}
+	}
+
+	// 3. Extract the 4 Answers and find the correct index based on data-correct="1"
+	doc.Find("#questions ul li").Each(func(i int, s *goquery.Selection) {
+		if i < 4 {
+			// Extract answer text from the <label>
+			answerText := strings.TrimSpace(s.Find("label").Text())
+			q.Answers[i] = answerText
+
+			// Check the companion <input> element for the correct flag attribute
+			input := s.Find("input")
+			if input.AttrOr("data-correct", "0") == "1" {
+				q.CorrectAnswer = i + 1 // 1-indexed (1, 2, 3, or 4)
+			}
+		}
+	})
+
+	return q, nil
+}
+
+// downloadImage pulls the remote asset down and writes it to the local data directory
+func downloadImage(url, questionID, outputDir string) (string, error) {
+	// Ensure the directory exists
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", err
+	}
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download image, status: %s", resp.Status)
+	}
+
+	// Determine file extension (fallback to .png if none found)
+	ext := filepath.Ext(url)
+	if ext == "" {
+		ext = ".png"
+	}
+
+	// Create a predictable filename using the question ID (e.g., c1_3.png)
+	filename := questionID + ext
+	finalPath := filepath.Join(outputDir, filename)
+
+	out, err := os.Create(finalPath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return filename, nil
+}
