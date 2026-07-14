@@ -2,147 +2,330 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>לימוד תאוריה - C1</title>
+    <title>מערכת תרגול תיאוריה</title>
     <style>
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background-color: #f3f4f6;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
+        body { font-family: system-ui, -apple-system, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .controls { display: flex; gap: 15px; margin-bottom: 20px; }
+        button { padding: 12px 24px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 15px; }
+        .stat-box { background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #e9ecef; }
+        .stat-val { font-size: 24px; font-weight: bold; color: #333; }
+        .stat-lbl { font-size: 13px; color: #6c757d; margin-top: 5px; }
+        .question-img { max-width: 100%; height: auto; border-radius: 8px; margin-top: 15px; }
+        .answers-list { list-style: none; padding: 0; margin: 20px 0 0 0; }
+        .answer-item { padding: 15px; background: #f8f9fa; border: 2px solid #e9ecef; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; }
+        .answer-item:hover { background: #edf2f7; border-color: #cbd5e0; }
+        .answer-item.correct {
+            background-color: #d4edda !important; /* Soft green */
+            border-color: #c3e6cb !important;
+            color: #155724;
         }
-        .container {
-            max-width: 600px;
-            width: 100%;
-            background: white;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        .answer-item.wrong {
+            background-color: #f8d7da !important; /* Soft red */
+            border-color: #f5c6cb !important;
+            color: #721c24;
         }
-        .question-img {
-            max-width: 100%;
-            height: auto;
-            display: block;
-            margin: 0 auto 16px;
-            border-radius: 8px;
+        .answer-item.disabled {
+            pointer-events: none; /* Stops double-clicking answers */
+            cursor: not-allowed;
         }
-        h2 { color: #1f2937; margin-bottom: 20px; font-size: 1.3rem; }
-        .btn {
-            display: block;
-            width: 100%;
-            padding: 14px;
-            margin-bottom: 12px;
-            text-align: right;
-            background: #f9fafb;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: all 0.2s;
-        }
-        .btn:hover:not(:disabled) { background: #f3f4f6; border-color: #d1d5db; }
-        .correct { background: #d1fae5 !important; border-color: #10b981 !important; color: #065f46; font-weight: bold; }
-        .wrong { background: #fee2e2 !important; border-color: #ef4444 !important; color: #991b1b; }
-        .actions { display: flex; gap: 12px; margin-top: 20px; }
-        .action-btn {
-            flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: bold;
-        }
-        .next-btn { background: #2563eb; color: white; }
-        .known-btn { background: #059669; color: white; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div id="quiz-box">
-            <img id="q-img" class="question-img" style="display: none;" src="" alt="תמרור / איור">
-            <h2 id="q-text">טוען שאלה...</h2>
-            <div id="answers-box"></div>
-            <div class="actions">
-                <button class="action-btn known-btn" onclick="markAsKnown()">יודע בוודאות, אל תראה שוב</button>
-                <button class="action-btn next-btn" id="next-button" style="visibility: hidden;" onclick="loadQuestion()">שאלה הבאה ←</button>
-            </div>
+
+<div class="container">
+    <!-- Top Mode Switchers & Status Controls -->
+    <div class="controls">
+        <button class="btn-primary" onclick="setMode('all')">📚 תרגול מלא</button>
+        <button class="btn-success" onclick="setMode('simulator')">⏱️ מבחן סימולציה (30 שאלות)</button>
+        <button class="btn-secondary" onclick="fetchStatus()">📊 עדכן סטטוס</button>
+    </div>
+
+    <!-- Status Dashboard Dashboard -->
+    <div id="status-panel" class="card">
+        <h3>לוח ביצועים וסטטוס</h3>
+        <div class="stats-grid">
+            <div class="stat-box"><div id="stat-total" class="stat-val">-</div><div class="stat-lbl">סה"כ שאלות</div></div>
+            <div class="stat-box"><div id="stat-known" class="stat-val">-</div><div class="stat-lbl">שאלות שנלמדו</div></div>
+            <div class="stat-box"><div id="stat-correct" class="stat-val">-</div><div class="stat-lbl">תשובות נכונות</div></div>
+            <div class="stat-box"><div id="stat-wrong" class="stat-val">-</div><div class="stat-lbl">תשובות שגויות</div></div>
         </div>
     </div>
 
-    <script>
-        let currentQuestion = null;
-        let answered = false;
+    <!-- Active Question Window -->
+    <div id="question-panel" class="card">
+        <div class="question-header">
+            <!-- This will read "שאלה 1 מתוך 30" or similar -->
+            <span id="question-counter" style="display: none; font-weight: bold; color: #555;"></span>
+            <h2 id="question-text">טוען שאלה...</h2>
+        </div>
+        <div id="image-container"></div>
+        <ul id="answers-container" class="answers-list"></ul>
+        <button id="next-btn" style="display: none;" class="btn-primary" onclick="loadNextQuestion()">שאלה הבאה ←</button>
+    </div>
+</div>
 
-        async function loadQuestion() {
-            answered = false;
-            document.getElementById('next-button').style.visibility = 'hidden';
+<script>
+    let currentQuestion = null;
+    let hasAnswered = false;
+
+    // Global state trackers
+    window.currentQuestionNum = 0;
+    const SIMULATOR_LIMIT = 5; // Max questions in simulator mode
+
+    // Session score trackers
+    window.sessionCorrect = 0;
+    window.sessionWrong = 0;
+
+    async function fetchNextQuestion() {
+        try {
+            hasAnswered = false;
+            const nextBtn = document.getElementById('next-btn');
+            if (nextBtn) nextBtn.style.display = 'none';
             
+            localLog("Requesting question payload from backend...");
             const res = await fetch('/api/question');
+            
             if (res.status === 404) {
-                document.getElementById('quiz-box').innerHTML = '<h2>🎉 כל הכבוד! ענית על כל השאלות במאגר!</h2>';
+                localLog("Backend returned 404 - no questions left or database empty.");
+                const qText = document.getElementById('question-text');
+                if (qText) qText.innerText = "🏁 המבחן הסתיים או שאין שאלות נוספות במאגר!";
+                
+                const counterEl = document.getElementById('question-counter');
+                if (counterEl) counterEl.style.display = 'none';
                 return;
             }
             
             currentQuestion = await res.json();
-            
-            // Set Text
-            document.getElementById('q-text').innerText = currentQuestion.Text;
-            
-            // Set Image
-            const imgElement = document.getElementById('q-img');
-            if (currentQuestion.ImageURL) {
-                imgElement.src = '/images/' + currentQuestion.ImageURL;
-                imgElement.style.display = 'block';
+            localLog("Successfully loaded question object:", currentQuestion);
+            console.log("DEBUG COUNTER: currentMode is ->", typeof window.currentMode, `"${window.currentMode}"`);
+
+            // --- COUNTER LOGIC ---
+            if (window.currentMode === 'simulator') {
+                window.currentQuestionNum++; 
+
+                // If the user has exceeded the allowed questions, break the loop
+                if (window.currentQuestionNum > SIMULATOR_LIMIT) {
+                    localLog("Simulator limit reached. Ending exam.");
+                    showExamResults();
+                    return; 
+                }
+                
+                const counterEl = document.getElementById('question-counter');
+                if (counterEl) {
+                    counterEl.innerText = `שאלה ${window.currentQuestionNum} מתוך ${SIMULATOR_LIMIT}`;
+                    counterEl.style.display = 'block'; 
+                }
             } else {
-                imgElement.style.display = 'none';
+                const counterEl = document.getElementById('question-counter');
+                if (counterEl) counterEl.style.display = 'none';
+            }
+            // ---------------------
+            
+            const qText = document.getElementById('question-text');
+            if (qText) {
+                qText.innerText = currentQuestion.Text || currentQuestion.text || "שאלה ללא טקסט";
+            }
+            
+            const imgContainer = document.getElementById('image-container');
+            if (imgContainer) {
+                const imgUrl = currentQuestion.ImageURL || currentQuestion.image_url;
+                if (imgUrl) {
+                    imgContainer.innerHTML = `<img src="/data/images/${imgUrl}" class="question-img" alt="שאלה תיאוריה">`;
+                } else {
+                    imgContainer.innerHTML = "";
+                }
             }
 
-            // Render Answers
-            const box = document.getElementById('answers-box');
-            box.innerHTML = '';
-            currentQuestion.Answers.forEach((ans, index) => {
-                const btn = document.createElement('button');
-                btn.className = 'btn';
-                btn.innerText = ans;
-                btn.onclick = () => handleAnswer(index + 1, btn);
-                box.appendChild(btn);
-            });
-        }
-
-        async function handleAnswer(choice, selectedBtn) {
-            if (answered) return;
-            answered = true;
-
-            const isCorrect = choice === currentQuestion.CorrectAnswer;
+            const container = document.getElementById('answers-container');
+            if (!container) return;
+            container.innerHTML = "";
             
-            // Report to Backend
-            await fetch('/api/question/answer', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: currentQuestion.ID, correct: isCorrect })
-            });
-
-            // Color-code the interface buttons
-            const buttons = document.getElementById('answers-box').children;
-            if (isCorrect) {
-                selectedBtn.classList.add('correct');
+            let answersArray = [];
+            if (currentQuestion.Answers && Array.isArray(currentQuestion.Answers)) {
+                answersArray = currentQuestion.Answers;
+            } else if (currentQuestion.answers && Array.isArray(currentQuestion.answers)) {
+                answersArray = currentQuestion.answers;
             } else {
-                selectedBtn.classList.add('wrong');
-                buttons[currentQuestion.CorrectAnswer - 1].classList.add('correct');
+                answersArray = [
+                    currentQuestion.Ans1 || currentQuestion.ans1,
+                    currentQuestion.Ans2 || currentQuestion.ans2,
+                    currentQuestion.Ans3 || currentQuestion.ans3,
+                    currentQuestion.Ans4 || currentQuestion.ans4
+                ];
             }
-
-            document.getElementById('next-button').style.visibility = 'visible';
+            
+            answersArray.forEach((ans, idx) => {
+                if (ans) {
+                    const li = document.createElement('li');
+                    li.className = 'answer-item';
+                    li.id = `ans-${idx + 1}`;
+                    li.innerText = ans;
+                    li.onclick = () => submitAnswer(idx + 1);
+                    container.appendChild(li);
+                }
+            });
+        } catch (err) {
+            console.error("Render execution failed:", err);
         }
+    }
 
-        async function markAsKnown() {
-            if (!currentQuestion) return;
-            await fetch('/api/question/mark-known', {
+    function localLog(msg, data = "") {
+        console.log(`[TheoryApp] ${msg}`, data);
+    }
+
+    function showExamResults() {
+        const answersContainer = document.getElementById('answers-container');
+        if (answersContainer) answersContainer.innerHTML = "";
+        
+        const nextBtn = document.getElementById('next-btn');
+        if (nextBtn) nextBtn.style.display = 'none';
+        
+        const counterEl = document.getElementById('question-counter');
+        if (counterEl) counterEl.style.display = 'none';
+        
+        const imgContainer = document.getElementById('image-container');
+        if (imgContainer) imgContainer.innerHTML = "";
+
+        // Calculate passing threshold (allowing max 4 mistakes for 30 Qs, or scale for debugging)
+        const maxAllowedMistakes = SIMULATOR_LIMIT === 3 ? 1 : 4;
+        const isPassed = window.sessionWrong <= maxAllowedMistakes;
+        
+        const resultTitle = isPassed ? "🎉 עברת את המבחן!" : "❌ לא עברת הפעם";
+        const resultColor = isPassed ? "#2e7d32" : "#c62828";
+
+        const qText = document.getElementById('question-text');
+        if (qText) {
+            qText.innerHTML = `
+                <div style="text-align: center; padding: 20px; border-radius: 8px; background-color: #f8f9fa; border: 2px solid ${resultColor}; margin-top: 20px;">
+                    <h1 style="color: ${resultColor}; margin-bottom: 15px;">${resultTitle}</h1>
+                    <p style="font-size: 1.2rem; margin: 10px 0;">שאלות שנענו: <strong>${SIMULATOR_LIMIT}</strong></p>
+                    <div style="display: flex; justify-content: space-around; margin: 20px 0; font-size: 1.1rem;">
+                        <span style="color: #2e7d32; font-weight: bold;">✅ תשובות נכונות: ${window.sessionCorrect}</span>
+                        <span style="color: #c62828; font-weight: bold;">❌ שגיאות: ${window.sessionWrong}</span>
+                    </div>
+                    <p style="font-size: 1rem; color: #555;">ציון: <strong>${Math.round((window.sessionCorrect / SIMULATOR_LIMIT) * 100)}%</strong></p>
+                    <button onclick="setMode('simulator')" style="margin-top: 20px; padding: 10px 20px; font-size: 1rem; border: none; background-color: #007bff; color: white; border-radius: 5px; cursor: pointer;">מבחן חדש 🔄</button>
+                </div>
+            `;
+        }
+    }
+
+    async function setMode(mode) {
+        try {
+            localLog(`Switching mode to: ${mode}`);
+            window.currentMode = mode;
+            window.currentQuestionNum = 0; 
+
+            // Reset simulator stats for the new session
+            window.sessionCorrect = 0;
+            window.sessionWrong = 0;
+
+            const res = await fetch('/api/session/mode', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: currentQuestion.ID })
+                body: JSON.stringify({ mode: mode })
             });
-            loadQuestion();
+            if (res.ok) {
+                hasAnswered = false;
+                await fetchNextQuestion();
+                await fetchStatus();
+            }
+        } catch (err) {
+            console.error('Error setting mode:', err);
         }
+    }
 
-        // Run on mount
-        loadQuestion();
-    </script>
+    async function fetchStatus() {
+        try {
+            localLog("Fetching tracker status stats...");
+            const res = await fetch('/api/status');
+            if (res.ok) {
+                const data = await res.json();
+                
+                const elTotal = document.getElementById('stat-total');
+                const elKnown = document.getElementById('stat-known');
+                const elCorrect = document.getElementById('stat-correct');
+                const elWrong = document.getElementById('stat-wrong');
+
+                if (elTotal) elTotal.innerText = data.total_questions || 0;
+                if (elKnown) elKnown.innerText = data.mastered_count || 0;
+                if (elCorrect) elCorrect.innerText = data.correct_answers || 0;
+                if (elWrong) elWrong.innerText = data.wrong_answers || 0;
+            }
+        } catch (err) {
+            console.error("Status parsing crash:", err);
+        }
+    }
+
+    async function submitAnswer(selectedIdx) {
+        if (hasAnswered || !currentQuestion) return;
+        hasAnswered = true;
+
+        document.querySelectorAll('.answer-item').forEach(el => el.classList.add('disabled'));
+
+        try {
+            const qId = currentQuestion.ID || currentQuestion.id;
+            const res = await fetch('/api/question/answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_id: qId,
+                    selected_answer: selectedIdx
+                })
+            });
+            
+            if (res.ok) {
+                const correctIdx = currentQuestion.CorrectAnswer || currentQuestion.CorrectAns || currentQuestion.correct_ans;
+                
+                console.log(`[DEBUG SCORE] Mode: ${window.currentMode} | User selected: ${selectedIdx} | Correct is: ${correctIdx}`);
+
+                // Track simulator scores
+                if (window.currentMode === 'simulator') {
+                    if (Number(selectedIdx) === Number(correctIdx)) {
+                        window.sessionCorrect++;
+                        console.log(`Score Updated! Correct: ${window.sessionCorrect}`);
+                    } else {
+                        window.sessionWrong++;
+                        console.log(`Score Updated! Wrong: ${window.sessionWrong}`);
+                    }
+                }
+
+                const elCorrectAns = document.getElementById(`ans-${correctIdx}`);
+                if (elCorrectAns) elCorrectAns.classList.add('correct');
+                
+                if (selectedIdx !== correctIdx) {
+                    const elWrongAns = document.getElementById(`ans-${selectedIdx}`);
+                    if (elWrongAns) elWrongAns.classList.add('wrong');
+                }
+                
+                const nextBtn = document.getElementById('next-btn');
+                if (nextBtn) nextBtn.style.display = 'block';
+                
+                await fetchStatus();
+            }
+        } catch (err) {
+            console.error("Submission error:", err);
+            hasAnswered = false;
+        }
+    }
+
+    function loadNextQuestion() {
+        document.getElementById('next-btn').style.display = 'none';
+        fetchNextQuestion(); 
+    }
+
+    // Startup initialization
+    window.addEventListener('DOMContentLoaded', () => {
+        localLog("DOM content ready, firing API startup sequences.");
+        fetchNextQuestion();
+        fetchStatus();
+    });
+</script>
 </body>
 </html>

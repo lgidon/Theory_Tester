@@ -35,3 +35,9 @@ go.work.sum
 # Ignore local runtime data
 data/theory.db
 data/images/
+.sql
+test.sql
+data/theory.db
+.air.toml
+tmp/
+.devcontainer/

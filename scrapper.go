@@ -1,12 +1,12 @@
 package main
 
 import (
-	"io"
-	"os"
-	"path/filepath"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,10 +53,14 @@ func main() {
 		}
 
 		fmt.Printf("Found %d questions. Starting processing run...\n", len(questionURLs))
-
+		count := 0
 		for i, url := range questionURLs {
+			if count >= 15 {
+        		break
+    		}
+			count ++
 			fmt.Printf("[%d/%d] Scraping: %s\n", i+1, len(questionURLs), url)
-			
+
 			q, err := parseQuestionPage(url)
 			if err != nil {
 				fmt.Printf("⚠️ Error parsing %s: %v\n", url, err)
@@ -66,13 +70,13 @@ func main() {
 			if q.ImageURL != "" {
 				imagesDir := "./data/images"
 				fmt.Printf("   💾 Downloading image for %s...\n", q.ID)
-				
+
 				localFilename, err := downloadImage(q.ImageURL, q.ID, imagesDir)
 				if err != nil {
 					fmt.Printf("   ⚠️ Failed to download image for %s: %v\n", q.ID, err)
-					q.ImageURL = "" 
+					q.ImageURL = ""
 				} else {
-					q.ImageURL = localFilename 
+					q.ImageURL = localFilename
 				}
 			}
 
@@ -91,6 +95,9 @@ func main() {
 	// 4. Launch Web Server (Reachable by both code execution branches)
 	server := NewWebServer(db, licenseType)
 	fmt.Println("🚀 Web UI Server active on http://localhost:8080")
+
+
+
 	if err := server.Start("8080"); err != nil {
 		log.Fatalf("Server shutdown unexpectedly: %v", err)
 	}
