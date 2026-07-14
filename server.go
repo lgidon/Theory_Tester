@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"strings"
 )
 
 // AnswerPayload captures user response checks from the frontend
@@ -76,7 +77,9 @@ func NewWebServer(db *DBClient, licenseType string) *WebServer {
 	return &WebServer{DB: db, LicenseType: licenseType}
 }
 
-func (ws *WebServer) Start(port string) error {
+
+// func (ws *WebServer) Start(port string) error {
+func (ws *WebServer) SetupRoutes(port string) http.Handler {	
 	mux := http.NewServeMux()
 
 	// 1. API Routes
@@ -94,7 +97,7 @@ func (ws *WebServer) Start(port string) error {
 	// 3. Embedded Static Frontend Route
 	distFolder, err := fs.Sub(embeddedFrontend, "frontend/dist")
 	if err != nil {
-		return err
+		log.Printf("Warning: Failed to load embedded frontend: %v", err)
 	}
 
 	fileServer := http.FileServer(http.FS(distFolder))
@@ -117,9 +120,24 @@ func (ws *WebServer) Start(port string) error {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	loggedHandler := LoggingMiddleware(mux)
+	// loggedHandler := LoggingMiddleware(mux)
 
-	return http.ListenAndServe(":"+port, loggedHandler)
+	return mux
+}
+
+func (ws *WebServer) Start(port string) error {
+	router := ws.SetupRoutes(port)
+
+	loggedHandler := LoggingMiddleware(router)
+
+	addr := port
+	if !strings.HasPrefix(addr, ":") {
+		addr = ":" + addr
+	}
+
+	log.Printf("DEBUG: Server is attempting to bind to address: %q", addr)
+	// loggedHandler := LoggingMiddleware(mux)
+	return http.ListenAndServe(addr, loggedHandler)
 }
 
 func (ws *WebServer) handleGetQuestion(w http.ResponseWriter, r *http.Request) {
