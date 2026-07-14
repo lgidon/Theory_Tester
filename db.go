@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"log"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type DBClient struct {
@@ -21,7 +21,7 @@ func InitDB(dbPath string) (*DBClient, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
