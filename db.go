@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"log"
+	// "log"
 	_ "modernc.org/sqlite"
 )
 
@@ -212,14 +212,14 @@ func (db *DBClient) GetNextRandomQuestion(licenseType string) (*Question, error)
 // RecordAnswerResult updates the user study metrics based on correctness
 func (db *DBClient) RecordAnswerResult(questionID string, isCorrect bool) error {
 	var points int
-	log.Printf("📥 Is correct: %t", isCorrect)
+	infoPrintf("📥 Is correct: %t", isCorrect)
 	if isCorrect {
 		points = 1
 	} else {
 		points = 0
 	}
 
-	log.Printf("📥 Received Answer Submission - ID: '%s', Answer: %d", questionID, points)
+	infoPrintf("📥 Received Answer Submission - ID: '%s', Answer: %d", questionID, points)
 
 	query := `
     INSERT INTO history (question_id, is_correct, timestamp)

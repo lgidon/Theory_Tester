@@ -14,8 +14,8 @@ import (
 
 // AnswerPayload captures user response checks from the frontend
 type AnswerPayload struct {
-	ID      string `json:"question_id"`
-	SelectedAnswer int `json:"selected_answer"`
+	ID             string `json:"question_id"`
+	SelectedAnswer int    `json:"selected_answer"`
 }
 
 // MarkKnownPayload captures requests to filter a question out
@@ -48,7 +48,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(lrw, r)
 
-		log.Printf(
+		infoPrintf(
 			"%-6s %s %d %s",
 			r.Method,
 			r.URL.Path,
@@ -77,9 +77,8 @@ func NewWebServer(db *DBClient, licenseType string) *WebServer {
 	return &WebServer{DB: db, LicenseType: licenseType}
 }
 
-
 // func (ws *WebServer) Start(port string) error {
-func (ws *WebServer) SetupRoutes(port string) http.Handler {	
+func (ws *WebServer) SetupRoutes(port string) http.Handler {
 	mux := http.NewServeMux()
 
 	// 1. API Routes
@@ -135,7 +134,7 @@ func (ws *WebServer) Start(port string) error {
 	// 	addr = ":" + addr
 	// }
 
-	log.Printf("DEBUG: Server is attempting to bind to address: %q", addr)
+	infoPrintf("DEBUG: Server is attempting to bind to address: %q", addr)
 	// loggedHandler := LoggingMiddleware(mux)
 	return http.ListenAndServe(addr, loggedHandler)
 }
@@ -205,7 +204,7 @@ func (ws *WebServer) handlePostAnswer(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, _ := io.ReadAll(r.Body)
 
 	// 2. Print the raw string input to your terminal
-	log.Printf("🔌 RAW FRONTEND INPUT JSON: %s", string(bodyBytes))
+	infoPrintf("🔌 RAW FRONTEND INPUT JSON: %s", string(bodyBytes))
 
 	// 3. IMPORTANT: Restore the body so the JSON decoder can read it next
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
@@ -223,12 +222,12 @@ func (ws *WebServer) handlePostAnswer(w http.ResponseWriter, r *http.Request) {
 
 	correctIndex, err := ws.DB.GetCorrectAnswerByID(payload.ID)
 	if err != nil {
-		log.Printf("❌ Failed to look up question truth: %v", err)
+		infoPrintf("❌ Failed to look up question truth: %v", err)
 		JSONError(w, "Question not found", http.StatusNotFound)
 		return
 	}
 	isCorrect := (payload.SelectedAnswer == correctIndex)
-	log.Printf("📥 ID: %s, Selected Answer: %d. Correct answer %d", payload.ID, payload.SelectedAnswer, correctIndex)
+	infoPrintf("📥 ID: %s, Selected Answer: %d. Correct answer %d", payload.ID, payload.SelectedAnswer, correctIndex)
 
 	if err := ws.DB.RecordAnswerResult(payload.ID, isCorrect); err != nil {
 		JSONError(w, "Failed to update progress", http.StatusInternalServerError)
