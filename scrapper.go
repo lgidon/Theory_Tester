@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
+	"os/exec"
+	"runtime"
 	"github.com/PuerkitoBio/goquery"
+	"flag"
 )
 
 // Question represents our normalized internal data structure
@@ -31,14 +33,19 @@ func main() {
 	dbPath := "./data/theory.db"
 	licenseType := "C1"
 
-	// 1. Initialize DB Client
+	// 1. Define command-line flags
+	port := flag.String("port", "8080", "Port to run the server on")
+	localMode := flag.Bool("local", true, "Run locally (binds to localhost, auto-opens browser)")
+	flag.Parse()
+
+	// 2. Initialize DB Client
 	db, err := InitDB(dbPath)
 	if err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
 	defer db.Conn.Close()
 
-	// 2. Check if first-run scrape is necessary
+	// 3. Check if first-run scrape is necessary
 	needsScrape, err := db.IsDatabaseEmpty(licenseType)
 	if err != nil {
 		log.Fatalf("Failed to verify database state: %v", err)
@@ -56,9 +63,9 @@ func main() {
 		count := 0
 		for i, url := range questionURLs {
 			if count >= 15 {
-        		break
-    		}
-			count ++
+				break
+			}
+			count++
 			fmt.Printf("[%d/%d] Scraping: %s\n", i+1, len(questionURLs), url)
 
 			q, err := parseQuestionPage(url)
@@ -92,15 +99,59 @@ func main() {
 		fmt.Printf("Database already contains questions for %s. Skipping scrape phase.\n", licenseType)
 	}
 
-	// 4. Launch Web Server (Reachable by both code execution branches)
+	// 4. Determine host binding based on the execution mode
+	host := "0.0.0.0" // Binds to all interfaces (headless webserver mode)
+	if *localMode {
+		host = "127.0.0.1" // Binds only to loopback (local client mode)
+	}
+	addr := fmt.Sprintf("%s:%s", host, *port)
+
+	// 5. Launch Web Server (Reachable by both code execution branches)
 	server := NewWebServer(db, licenseType)
-	fmt.Println("🚀 Web UI Server active on http://localhost:8080")
 
+	// 6. If running in local mode, open the browser asynchronously 
+	if *localMode {
+		go func() {
+			url := fmt.Sprintf("http://localhost:%s", *port)
+			fmt.Printf("🚀 Local mode active. Launching browser to %s\n", url)
+			
+			// Small delay to let the server startup and listen
+			time.Sleep(200 * time.Millisecond)
+			if err := openBrowser(url); err != nil {
+				log.Printf("⚠️ Could not automatically open browser: %v", err)
+				log.Printf("Please open your browser manually and navigate to: %s", url)
+			}
+		}()
+	} else {
+		fmt.Printf("🚀 Server mode active. Listening on http://%s\n", addr)
+	}
 
-
-	if err := server.Start("8080"); err != nil {
+	// 7. Start the server with the dynamic address
+	if err := server.Start(addr); err != nil {
 		log.Fatalf("Server shutdown unexpectedly: %v", err)
 	}
+}
+
+
+func openBrowser(url string) error {
+	var cmd string
+	var args []string
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
+	case "darwin": // macOS
+		cmd = "open"
+		args = []string{url}
+	case "linux":
+		cmd = "xdg-open"
+		args = []string{url}
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	return exec.Command(cmd, args...).Start()
 }
 
 // crawlIndexPage parses the exact DOM structure provided in your screenshot

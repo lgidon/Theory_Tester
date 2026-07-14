@@ -9,7 +9,7 @@ import (
 	"log"
 	"net/http"
 	"time"
-	"strings"
+	// "strings"
 )
 
 // AnswerPayload captures user response checks from the frontend
@@ -131,9 +131,9 @@ func (ws *WebServer) Start(port string) error {
 	loggedHandler := LoggingMiddleware(router)
 
 	addr := port
-	if !strings.HasPrefix(addr, ":") {
-		addr = ":" + addr
-	}
+	// if !strings.HasPrefix(addr, ":") {
+	// 	addr = ":" + addr
+	// }
 
 	log.Printf("DEBUG: Server is attempting to bind to address: %q", addr)
 	// loggedHandler := LoggingMiddleware(mux)
