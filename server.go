@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"context"
 	// "strings"
 )
 
@@ -71,10 +72,14 @@ var embeddedFrontend embed.FS
 type WebServer struct {
 	DB          *DBClient
 	LicenseType string
+	httpServer  *http.Server
 }
 
 func NewWebServer(db *DBClient, licenseType string) *WebServer {
-	return &WebServer{DB: db, LicenseType: licenseType}
+	return &WebServer{
+		DB:          db,
+		LicenseType: licenseType,
+	}
 }
 
 // func (ws *WebServer) Start(port string) error {
@@ -124,19 +129,34 @@ func (ws *WebServer) SetupRoutes(port string) http.Handler {
 	return mux
 }
 
-func (ws *WebServer) Start(port string) error {
-	router := ws.SetupRoutes(port)
-
+func (ws *WebServer) Start(addr string) error {
+	router := ws.SetupRoutes(addr)
 	loggedHandler := LoggingMiddleware(router)
 
-	addr := port
-	// if !strings.HasPrefix(addr, ":") {
-	// 	addr = ":" + addr
-	// }
+	// Create and store the http.Server instance
+	ws.httpServer = &http.Server{
+		Addr:    addr,
+		Handler: loggedHandler,
+	}
 
+	// Use the stored server to listen and serve
 	infoPrintf("DEBUG: Server is attempting to bind to address: %q", addr)
-	// loggedHandler := LoggingMiddleware(mux)
-	return http.ListenAndServe(addr, loggedHandler)
+	
+	err := ws.httpServer.ListenAndServe()
+	// When Shutdown is called, ListenAndServe returns http.ErrServerClosed.
+	// We want to return nil (no error) in this case so our main routine exits cleanly.
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
+}
+
+// Shutdown gracefully stops the server without interrupting active connections
+func (ws *WebServer) Shutdown(ctx context.Context) error {
+	if ws.httpServer == nil {
+		return nil
+	}
+	return ws.httpServer.Shutdown(ctx)
 }
 
 func (ws *WebServer) handleGetQuestion(w http.ResponseWriter, r *http.Request) {

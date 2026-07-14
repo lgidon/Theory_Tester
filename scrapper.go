@@ -1,18 +1,14 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
-
 	"github.com/PuerkitoBio/goquery"
 )
 
@@ -30,132 +26,8 @@ const (
 	CategoryURL = BaseURL + "/questions/c1" // Temporary hardcoded fallback or initial entrypoint
 )
 
-// Global or package-level verbosity tracker
-var verbose bool
 
-// infoPrintf only prints to stdout if verbose mode is enabled
-func infoPrintf(format string, a ...interface{}) {
-	if verbose {
-		fmt.Printf(format, a...)
-	}
-}
 
-// infoPrintln only prints to stdout if verbose mode is enabled
-func infoPrintln(a ...interface{}) {
-	if verbose {
-		fmt.Println(a...)
-	}
-}
-
-func main() {
-	dbPath := "./data/theory.db"
-	licenseType := "C1"
-
-	// 1. Define command-line flags
-	port := flag.String("port", "8080", "Port to run the server on")
-	localMode := flag.Bool("local", true, "Run locally (binds to localhost, auto-opens browser)")
-	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging")
-	flag.Parse()
-
-	verbose = *verboseFlag
-
-	// 2. Initialize DB Client
-	db, err := InitDB(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Database initialization failed: %v\n", err)
-		os.Exit(1)
-	}
-	defer db.Conn.Close()
-
-	// 3. Check if first-run scrape is necessary
-	needsScrape, err := db.IsDatabaseEmpty(licenseType)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to verify database state: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 3. Perform the scrape only if database is clean
-	if needsScrape {
-		fmt.Printf("Database empty for %s. Commencing index crawl...\n", licenseType)
-		infoPrintf("\nDatabase empty. Commencing index crawl...\n")
-		questionURLs, err := crawlIndexPage(CategoryURL)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nError crawling index page: %v\n", err)
-			os.Exit(1)
-		}
-
-		infoPrintf("Found %d questions. Starting processing run...\n", len(questionURLs))
-		count := 0
-		for i, url := range questionURLs {
-			if count >= 15 {
-				break
-			}
-			count++
-			infoPrintf("[%d/%d] Scraping: %s\n", i+1, len(questionURLs), url)
-
-			q, err := parseQuestionPage(url)
-			if err != nil {
-				fmt.Printf("⚠️ Error parsing %s: %v\n", url, err)
-				continue
-			}
-
-			if q.ImageURL != "" {
-				imagesDir := "./data/images"
-				infoPrintf("   💾 Downloading image for %s...\n", q.ID)
-
-				localFilename, err := downloadImage(q.ImageURL, q.ID, imagesDir)
-				if err != nil {
-					fmt.Printf("   ⚠️ Failed to download image for %s: %v\n", q.ID, err)
-					q.ImageURL = ""
-				} else {
-					q.ImageURL = localFilename
-				}
-			}
-
-			if err := db.SaveQuestion(q, licenseType); err != nil {
-				fmt.Printf("⚠️ Error saving question %s to DB: %v\n", q.ID, err)
-				continue
-			}
-
-			time.Sleep(400 * time.Millisecond)
-		}
-		fmt.Println("\n🎉 Success! Question database hydrated completely.")
-	} else {
-		infoPrintf("Database already contains questions for %s. Skipping scrape phase.\n", licenseType)
-	}
-
-	// 4. Determine host binding based on the execution mode
-	host := "0.0.0.0" // Binds to all interfaces (headless webserver mode)
-	if *localMode {
-		host = "127.0.0.1" // Binds only to loopback (local client mode)
-	}
-	addr := fmt.Sprintf("%s:%s", host, *port)
-
-	// 5. Launch Web Server (Reachable by both code execution branches)
-	server := NewWebServer(db, licenseType)
-
-	// 6. If running in local mode, open the browser asynchronously
-	if *localMode {
-		go func() {
-			url := fmt.Sprintf("http://localhost:%s", *port)
-			infoPrintf("🚀 Local mode active. Launching browser to %s\n", url)
-
-			// Small delay to let the server startup and listen
-			time.Sleep(200 * time.Millisecond)
-			if err := openBrowser(url); err != nil {
-				log.Printf("⚠️ Could not automatically open browser: %v", err)
-				log.Printf("Please open your browser manually and navigate to: %s", url)
-			}
-		}()
-	} else {
-		infoPrintf("🚀 Server mode active. Listening on http://%s\n", addr)
-	}
-
-	// 7. Start the server with the dynamic address
-	if err := server.Start(addr); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	}
-}
 
 // openBrowser launches the OS default browser to the target URL
 func openBrowser(url string) error {
