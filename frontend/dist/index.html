@@ -7,7 +7,10 @@
         body { font-family: system-ui, -apple-system, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
         .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        .controls { display: flex; gap: 15px; margin-bottom: 20px; }
+        .controls { display: flex; gap: 15px; margin-bottom: 20px; align-items: flex-end; flex-wrap: wrap; }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        .control-label { font-size: 14px; font-weight: bold; color: #495057; }
+        select { padding: 12px 15px; font-size: 16px; border: 2px solid #007bff; border-radius: 8px; background: white; font-weight: bold; cursor: pointer; outline: none; }
         button { padding: 12px 24px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .btn-primary { background: #007bff; color: white; }
         .btn-secondary { background: #6c757d; color: white; }
@@ -41,6 +44,17 @@
 <div class="container">
     <!-- Top Mode Switchers & Status Controls -->
     <div class="controls">
+        <div class="control-group">
+            <span class="control-label">סוג רישיון / License</span>
+            <select id="license-select" onchange="changeLicense(this.value)">
+                <option value="B">רכב פרטי (B)</option>
+                <option value="A">אופנוע (A)</option>
+                <option value="C1">משאית קלה (C1)</option>
+                <option value="C">משאית כבדה (C)</option>
+                <option value="D">אוטובוס/מונית (D)</option>
+                <option value="1">טרקטור (1)</option>
+            </select>
+        </div>
         <button class="btn-primary" onclick="setMode('all')">📚 תרגול מלא</button>
         <button class="btn-success" onclick="setMode('simulator')">⏱️ מבחן סימולציה (30 שאלות)</button>
         <button class="btn-secondary" onclick="fetchStatus()">📊 עדכן סטטוס</button>
@@ -75,8 +89,9 @@
     let hasAnswered = false;
 
     // Global state trackers
+    window.currentMode = 'all';
     window.currentQuestionNum = 0;
-    const SIMULATOR_LIMIT = 5; // Max questions in simulator mode
+    const SIMULATOR_LIMIT = 30; // Matches official Israeli theory standard
 
     // Session score trackers
     window.sessionCorrect = 0;
@@ -87,9 +102,9 @@
             hasAnswered = false;
             const nextBtn = document.getElementById('next-btn');
             if (nextBtn) nextBtn.style.display = 'none';
-            
+            category = document.getElementById('license-select') ? document.getElementById('license-select').value : 'B';
             localLog("Requesting question payload from backend...");
-            const res = await fetch('/api/question');
+            const res = await fetch('/api/question?category=' + category);
             
             if (res.status === 404) {
                 localLog("Backend returned 404 - no questions left or database empty.");
@@ -192,7 +207,7 @@
         const imgContainer = document.getElementById('image-container');
         if (imgContainer) imgContainer.innerHTML = "";
 
-        // Calculate passing threshold (allowing max 4 mistakes for 30 Qs, or scale for debugging)
+        // Official rule: Max 4 mistakes allowed to pass the 30-question exam
         const maxAllowedMistakes = SIMULATOR_LIMIT === 3 ? 1 : 4;
         const isPassed = window.sessionWrong <= maxAllowedMistakes;
         
@@ -213,6 +228,24 @@
                     <button onclick="setMode('simulator')" style="margin-top: 20px; padding: 10px 20px; font-size: 1rem; border: none; background-color: #007bff; color: white; border-radius: 5px; cursor: pointer;">מבחן חדש 🔄</button>
                 </div>
             `;
+        }
+    }
+
+    async function changeLicense(licenseType) {
+        try {
+            localLog(`Updating license session filter to: ${licenseType}`);
+
+            // Reset session counters since the question pool changed
+            window.currentQuestionNum = 0;
+            window.sessionCorrect = 0;
+            window.sessionWrong = 0;
+            hasAnswered = false;
+
+            await fetchNextQuestion(licenseType);
+            await fetchStatus();
+            
+        } catch (err) {
+            console.error("Network or execution failure during license update:", err);
         }
     }
 
@@ -257,6 +290,11 @@
                 if (elKnown) elKnown.innerText = data.mastered_count || 0;
                 if (elCorrect) elCorrect.innerText = data.correct_answers || 0;
                 if (elWrong) elWrong.innerText = data.wrong_answers || 0;
+
+                // Sync the dropdown selector visual with the server state if present
+                if (data.current_license && document.getElementById('license-select')) {
+                    document.getElementById('license-select').value = data.current_license;
+                }
             }
         } catch (err) {
             console.error("Status parsing crash:", err);
@@ -285,7 +323,7 @@
                 
                 console.log(`[DEBUG SCORE] Mode: ${window.currentMode} | User selected: ${selectedIdx} | Correct is: ${correctIdx}`);
 
-                // Track simulator scores
+                // Track simulator scores safely converting to Numbers
                 if (window.currentMode === 'simulator') {
                     if (Number(selectedIdx) === Number(correctIdx)) {
                         window.sessionCorrect++;
@@ -299,7 +337,8 @@
                 const elCorrectAns = document.getElementById(`ans-${correctIdx}`);
                 if (elCorrectAns) elCorrectAns.classList.add('correct');
                 
-                if (selectedIdx !== correctIdx) {
+                // Fixed Type Mismatch comparison by forcing cast to Number
+                if (Number(selectedIdx) !== Number(correctIdx)) {
                     const elWrongAns = document.getElementById(`ans-${selectedIdx}`);
                     if (elWrongAns) elWrongAns.classList.add('wrong');
                 }

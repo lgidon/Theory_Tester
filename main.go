@@ -1,16 +1,15 @@
 package main
 
-
 import (
+	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
-	"time"
-	"io"
 	"os/signal"
 	"syscall"
-	"context"
+	"time"
 )
 
 // Global or package-level verbosity tracker
@@ -20,6 +19,7 @@ var verbose bool
 func infoPrintf(format string, a ...interface{}) {
 	if verbose {
 		fmt.Printf(format, a...)
+		fmt.Println()
 	}
 }
 
@@ -27,6 +27,7 @@ func infoPrintf(format string, a ...interface{}) {
 func infoPrintln(a ...interface{}) {
 	if verbose {
 		fmt.Println(a...)
+		fmt.Println("test")
 	}
 }
 
@@ -44,7 +45,7 @@ func main() {
 
 	// 2. Control log package output
 	if !verbose {
-		log.SetOutput(io.Discard) 
+		log.SetOutput(io.Discard)
 	}
 
 	// 3. Initialize DB Client
@@ -93,7 +94,7 @@ func main() {
 		} else {
 			fmt.Printf("🚀 Server mode active. Listening on http://%s\n", addr)
 		}
-		
+
 		serverError <- server.Start(addr)
 	}()
 

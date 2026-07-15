@@ -2,14 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"log"
 	"net/http"
 	"time"
-	"context"
 	// "strings"
 )
 
@@ -92,6 +94,9 @@ func (ws *WebServer) SetupRoutes(port string) http.Handler {
 	mux.HandleFunc("/api/question/mark-known", ws.handlePostMarkKnown)
 	mux.HandleFunc("/api/session/mode", ws.handlePostSessionMode)
 	mux.HandleFunc("/api/status", ws.handleGetStatus)
+	mux.HandleFunc("/api/categories", ws.handleGetCategories)
+	mux.HandleFunc("/api/categories/select", ws.handleSelectCategory)
+	mux.HandleFunc("/api/categories/reload", ws.handleReloadCategory)
 	// mux.Handle("/images/", http.StripPrefix("/images/", http.FileServer(http.Dir("./data/images"))))
 
 	// 2. Dynamic Image Route (Serves physical file stream from data/images)
@@ -141,7 +146,7 @@ func (ws *WebServer) Start(addr string) error {
 
 	// Use the stored server to listen and serve
 	infoPrintf("DEBUG: Server is attempting to bind to address: %q", addr)
-	
+
 	err := ws.httpServer.ListenAndServe()
 	// When Shutdown is called, ListenAndServe returns http.ErrServerClosed.
 	// We want to return nil (no error) in this case so our main routine exits cleanly.
@@ -164,20 +169,44 @@ func (ws *WebServer) handleGetQuestion(w http.ResponseWriter, r *http.Request) {
 		JSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	dbPath := "./data/theory.db"
+	infoPrintf("DEBUG: Received GET /api/question request with query: %s", r.URL.RawQuery)
+	category := r.URL.Query().Get("category") // empty if not provided
+
+	if category == "" {
+		category = "c1"
+	}
+
+	ws.LicenseType = category
+
+	needsScrape, err := ws.DB.IsDatabaseEmpty(ws.LicenseType)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to verify database state: %v\n", err)
+		ws.DB.Conn.Close()
+		os.Exit(1)
+	}
+
+	if needsScrape {
+		fmt.Printf("Preparing your database for %s (this only happens once)... ", ws.LicenseType)
+		if err := Run(category, dbPath); err != nil {
+			log.Fatalf("Scraper exited with error: %v", err)
+		fmt.Println("Done! 🎉")
+		}
+	}
 
 	userId := "default_user"
 	var mode string
 	var currentIndex int
 
 	// Read active mode context
-	err := ws.DB.Conn.QueryRow("SELECT session_mode, current_question_index FROM user_sessions WHERE user_id = ?", userId).Scan(&mode, &currentIndex)
-	if err != nil {
-		mode = "all" // Fail open gracefully to global run loop
-	}
+	// err := ws.DB.Conn.QueryRow("SELECT session_mode, current_question_index FROM user_sessions WHERE user_id = ?", userId).Scan(&mode, &currentIndex)
+	// if err != nil {
+	// 	mode = "all" // Fail open gracefully to global run loop
+	// }
 
 	var q *Question
-
-	if mode == "simulator" {
+	infoPrintf("Mode = %s", category)
+	if mode == "simulator" || mode == "mock" {
 		if currentIndex >= 30 {
 			JSONError(w, "Exam complete", http.StatusNotFound)
 			return
@@ -188,11 +217,12 @@ func (ws *WebServer) handleGetQuestion(w http.ResponseWriter, r *http.Request) {
 			SELECT q.id, q.text, q.image_url, q.ans1, q.ans2, q.ans3, q.ans4, q.correct_ans 
 			FROM questions q 
 			JOIN mock_exam_questions m ON q.id = m.question_id 
-			WHERE m.user_id = ? AND m.sort_order = ?`
-
+			WHERE m.user_id = ? AND m.sort_order = ? and q.license_type = ? COLLATE NOCASE`
+		infoPrintf("DEBUG: Fetching mock exam question for user %s at index %d in category %s", userId, currentIndex, category)
+		infoPrintf("DEBUG: Executing query: %s", query)
 		q = &Question{}
-		err = ws.DB.Conn.QueryRow(query, userId, currentIndex).Scan(
-			&q.ID, &q.Text, &q.ImageURL, &q.Answers[0], &q.Answers[1], &q.Answers[2], &q.Answers[3], &q.CorrectAnswer,
+		err = ws.DB.Conn.QueryRow(query, userId, currentIndex, category).Scan(
+			&q.ID, &q.Text, &q.ImageURL, &q.Ans1, &q.Ans2, &q.Ans3, &q.Ans4, &q.CorrectAns,
 		)
 		if err != nil {
 			JSONError(w, "Exam question track exhausted", http.StatusNotFound)
@@ -204,7 +234,7 @@ func (ws *WebServer) handleGetQuestion(w http.ResponseWriter, r *http.Request) {
 
 	} else {
 		// Default Mode: Run through random questions like before
-		q, err = ws.DB.GetNextRandomQuestion(ws.LicenseType)
+		q, err = ws.DB.GetNextRandomQuestion(category)
 		if err != nil {
 			JSONError(w, "Database failure", http.StatusInternalServerError)
 			return
@@ -292,7 +322,8 @@ func (ws *WebServer) handlePostSessionMode(w http.ResponseWriter, r *http.Reques
 	mode := payload["mode"]  // "all" or "mock"
 	userId := "default_user" // Hardcoded for now, can easily be extracted from headers/auth cookies later!
 
-	if mode == "simulator" {
+	if mode == "simulator"  {
+		infoPrintf("Mock license = %s", ws.LicenseType)
 		if err := ws.DB.CreateMockExam(userId, ws.LicenseType); err != nil {
 			JSONError(w, "Failed to initialize mock exam track", http.StatusInternalServerError)
 			return
@@ -324,3 +355,91 @@ func (ws *WebServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
+
+// handleGetCategories returns a map of categories and whether they have data
+func (ws *WebServer) handleGetCategories(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	categories := []string{"B", "C1", "C", "D"}
+	response := make(map[string]interface{})
+	list := make([]map[string]interface{}, 0)
+
+	for _, cat := range categories {
+		isEmpty, err := ws.DB.IsDatabaseEmpty(cat)
+		hasData := false
+		if err == nil && !isEmpty {
+			hasData = true
+		}
+		list = append(list, map[string]interface{}{
+			"id":       cat,
+			"hydrated": hasData,
+			"active":   cat == ws.LicenseType,
+		})
+	}
+
+	response["categories"] = list
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleSelectCategory changes the active memory state of the server
+func (ws *WebServer) handleSelectCategory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Category string `json:"category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Trigger lazy hydration if the user picks a clean category
+	isEmpty, err := ws.DB.IsDatabaseEmpty(payload.Category)
+	if err == nil && isEmpty {
+		fmt.Printf("Category %s requested but empty. Hydrating on demand...\n", payload.Category)
+		// Run your crawling logic inside a helper:
+		// go ws.hydrateCategoryOnDemand(payload.Category)
+	}
+
+	ws.LicenseType = payload.Category
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"success","active":"%s"}`, ws.LicenseType)
+}
+
+// handleReloadCategory safely clears and re-scrapes a distinct category
+func (ws *WebServer) handleReloadCategory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Category string `json:"category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Clear existing items from DB for this category
+	// Assuming your db.go exposes an explicit ClearCategory runtime method:
+	// ws.DB.ClearCategory(payload.Category)
+
+	// 2. Trigger your crawlIndexPage & parseQuestionPage routine right here synchronously
+	// or via a channel status notifier.
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"reloaded","category":"%s"}`, payload.Category)
+}
+
+type LicenseRequest struct {
+	License string `json:"license"`
+}
+

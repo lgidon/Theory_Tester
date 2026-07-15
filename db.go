@@ -154,7 +154,7 @@ func (db *DBClient) SaveQuestion(q Question, licenseType string) error {
 	_, err = tx.Exec(`
 		INSERT INTO questions (id, text, image_url, ans1, ans2, ans3, ans4, correct_ans, license_type)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		q.ID, q.Text, q.ImageURL, q.Answers[0], q.Answers[1], q.Answers[2], q.Answers[3], q.CorrectAnswer, licenseType) // We reuse q.ImageURL to temporarily pass the local path
+		q.ID, q.Text, q.ImageURL, q.Ans1, q.Ans2, q.Ans3, q.Ans4, q.CorrectAns, licenseType) // We reuse q.ImageURL to temporarily pass the local path
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to insert question %s: %w", q.ID, err)
@@ -193,7 +193,7 @@ func (db *DBClient) GetNextRandomQuestion(licenseType string) (*Question, error)
 	var imgPath sql.NullString
 
 	err := db.Conn.QueryRow(query, licenseType).Scan(
-		&q.ID, &q.Text, &imgPath, &q.Answers[0], &q.Answers[1], &q.Answers[2], &q.Answers[3], &q.CorrectAnswer,
+		&q.ID, &q.Text, &imgPath, &q.Ans1, &q.Ans2, &q.Ans3, &q.Ans4, &q.CorrectAns,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil // All questions cleared!
